@@ -9,6 +9,7 @@
 #include <cmath>
 #include <opencv2/opencv.hpp>
 #include "DA2Network.hpp"
+#include "../include/objectRecPreprocessing.h"
 
 // opens a video stream and runs it through the depth anything network
 // displays both the original video stream and the depth stream
@@ -17,14 +18,26 @@ int main(int argc, char *argv[]) {
   cv::Mat src;
   cv::Mat dst;
   cv::Mat dst_vis;
+  cv::Mat image;
+  cv::Mat image_dst;
+  cv::Mat image_dilated;
+  cv::Mat image_dst_vis;
   char filename[256]; // a string for the filename
   const float reduction = 0.5;
+
+  image = cv::imread("../Proj03Examples/img5P3.png");
+  if( image.empty() ) {
+    printf("Unable to read image\n");
+    return -1;
+  }
+
+  cv::imshow("image", image);
 
   // make a DANetwork object
   DA2Network da_net( "model_fp16.onnx" );
 
   // open example video
-  capdev = new cv::VideoCapture(1);
+  capdev = new cv::VideoCapture(0);
     if (!capdev->isOpened()) {
         printf("Unable to open video device\n");
         return -1;
@@ -60,16 +73,18 @@ int main(int argc, char *argv[]) {
     // apply a color map to the depth output to get a good visualization
     cv::applyColorMap(dst, dst_vis, cv::COLORMAP_INFERNO );
 
-    // if you want to modify the src image based on the depth image, do that here
-    /*
-    for(int i=0;i<src.rows;i++) {
-      for(int j=0;j<src.cols;j++) {
-	if( dst.at<unsigned char>(i, j) < 128 ) {
-	  src.at<cv::Vec3b>(i,j) = cv::Vec3b( 128, 100, 140 );
-	}
-      }
-    }
-    */
+
+
+    // da input for static image
+    da_net.set_input( image, scale_factor );
+
+    // run the network
+    da_net.run_network( image_dst, src.size() );
+
+    // apply a color map to the depth output to get a good visualization
+    cv::applyColorMap(image_dst, image_dst_vis, cv::COLORMAP_INFERNO );
+
+
 
     // display the images
     cv::imshow("video", src);
@@ -83,6 +98,13 @@ int main(int argc, char *argv[]) {
       cv::imwrite("video_image.png", src);
       cv::imwrite("depth_image.png", dst_vis);
       printf("Images saved\n");
+    } else if (key == 't') {
+      applyThresholding(image, image_dst);
+      cv::imshow("Thresholded", image);
+    } else if (key == 'm') {
+      applyThresholding(image, image_dst);
+      applyDilation(image_dst, image_dilated);
+      cv::imshow("Dilated", image_dilated);
     }
   }
 

@@ -25,7 +25,7 @@ PROGRAMS = displayVid
 all: $(PROGRAMS)
 
 # Individual Targets
-displayVid: displayVid.o
+displayVid: displayVid.o objectRecPreprocessing.o 
 	$(CC) $^ -o $(BINDIR)/$@ $(LDFLAGS) $(LDLIBS)
 	install_name_tool -add_rpath /opt/homebrew/lib $(BINDIR)/$@
 
