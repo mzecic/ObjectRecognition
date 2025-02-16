@@ -1,7 +1,7 @@
 /*
     Matej Zecic
     Spring 2025 - CS5330
-    Main file for displaying the video stream
+    Main file for displaying the video stream and processing both live video and a static image
 */
 
 #include <cstdio>
@@ -10,105 +10,120 @@
 #include <opencv2/opencv.hpp>
 #include "DA2Network.hpp"
 #include "../include/objectRecPreprocessing.h"
+#include <utility>
 
-// opens a video stream and runs it through the depth anything network
-// displays both the original video stream and the depth stream
 int main(int argc, char *argv[]) {
-  cv::VideoCapture *capdev;
-  cv::Mat src;
-  cv::Mat dst;
-  cv::Mat dst_vis;
-  cv::Mat image;
-  cv::Mat image_dst;
-  cv::Mat image_dilated;
-  cv::Mat image_dst_vis;
-  char filename[256]; // a string for the filename
-  const float reduction = 0.5;
+    cv::VideoCapture *capdev;
+    cv::Mat src;            // Live camera frame
+    cv::Mat dst;            // Depth output from network (for visualization)
+    cv::Mat dst_vis;
+    cv::Mat image;          // Static image loaded from file
+    cv::Mat image_dst;      // Depth output for static image from network
+    cv::Mat image_dilated;  // For morphological filtering result (static image)
+    cv::Mat image_cc;       // For connected components (static image)
+    cv::Mat cam_threshold;  // For thresholded camera frame
+    cv::Mat static_threshold; // For thresholded static image
+    cv::Mat cam_dilated;    // For dilated camera frame
+    cv::Mat static_dilated; // For dilated static image
+    cv::Mat cam_cc;         // For connected components (camera)
+    cv::Mat static_cc;      // For connected components (static)
+    cv::Mat region_analysis_cam;   // Feature overlay for camera
+    cv::Mat region_analysis_static; // Feature overlay for static image
 
-  image = cv::imread("../Proj03Examples/img5P3.png");
-  if( image.empty() ) {
-    printf("Unable to read image\n");
-    return -1;
-  }
+    char filename[256]; // a string for the filename
+    const float reduction = 0.5;
 
-  cv::imshow("image", image);
+    // Load the static image
+    image = cv::imread("../Proj03Examples/img5P3.png");
+    if( image.empty() ) {
+        printf("Unable to read image\n");
+        return -1;
+    }
+    cv::imshow("Static Image", image);
 
-  // make a DANetwork object
-  DA2Network da_net( "model_fp16.onnx" );
+    // Create the DANetwork object (for depth processing, if needed)
+    DA2Network da_net("model_fp16.onnx");
 
-  // open example video
-  capdev = new cv::VideoCapture(0);
+    // Open the camera
+    capdev = new cv::VideoCapture(0);
     if (!capdev->isOpened()) {
         printf("Unable to open video device\n");
         return -1;
     }
 
-  cv::Size refS( (int) capdev->get(cv::CAP_PROP_FRAME_WIDTH ),
-		 (int) capdev->get(cv::CAP_PROP_FRAME_HEIGHT));
+    cv::Size refS( (int) capdev->get(cv::CAP_PROP_FRAME_WIDTH),
+                   (int) capdev->get(cv::CAP_PROP_FRAME_HEIGHT) );
+    printf("Expected size: %d %d\n", refS.width, refS.height);
 
-  printf("Expected size: %d %d\n", refS.width, refS.height);
+    float scale_factor = 256.0 / (refS.height * reduction);
+    printf("Using scale factor %.2f\n", scale_factor);
 
-  float scale_factor = 256.0 / (refS.height*reduction);
-  printf("Using scale factor %.2f\n", scale_factor);
+    // Create output windows
+    cv::namedWindow("Video", 1);
+    cv::namedWindow("Thresholded Camera", 1);
+    cv::namedWindow("Thresholded Static", 1);
+    cv::namedWindow("Dilated Camera", 1);
+    cv::namedWindow("Dilated Static", 1);
+    cv::namedWindow("Connected Components (Camera)", 1);
+    cv::namedWindow("Connected Components (Static)", 1);
+    cv::namedWindow("Region Analysis (Camera)", 1);
+    cv::namedWindow("Region Analysis (Static)", 1);
 
-  cv::namedWindow( "Video", 1 );
-  cv::namedWindow( "Depth", 2 );
+   // Define a flag for overlay mode
+bool overlayMode = false;
 
-  for(;;) {
-    // capture the next frame
-    *capdev >> src;
-    if( src.empty()) {
-      printf("frame is empty\n");
-      break;
+    for (;;) {
+        // Capture a frame from the camera
+        *capdev >> src;
+        if (src.empty()) {
+            printf("Frame is empty\n");
+            break;
+        }
+        // Resize for speed
+        cv::resize(src, src, cv::Size(), reduction, reduction);
+
+        // Display the live video frame
+        cv::imshow("Video", src);
+
+        // Check for keypress
+        char key = cv::waitKey(10);
+        if (key == 'q') {
+            break;
+        }
+        else if (key == 'c') {
+            // Toggle overlay mode when 'c' is pressed.
+            overlayMode = !overlayMode;
+        }
+        else if (key == 's') {
+            cv::imwrite("video_image.png", src);
+            printf("Camera frame saved\n");
+        }
+        // Other key commands can be handled similarly (like 't' or 'm' for thresholding/dilation)
+
+        // If overlay mode is enabled, compute and display the overlay continuously.
+        if (overlayMode) {
+            // Process the current frame for overlay:
+            // You might choose a robust morphological filtering function here.
+            applyThresholding(src, cam_threshold);
+            applyMorphologicalFiltering(cam_threshold, cam_dilated);
+            cv::Mat cam_labels;
+            applyConnectedComponents(cam_dilated, cam_cc, cam_labels);
+
+            // Optionally, display the segmentation output.
+            cv::imshow("Connected Components (Camera)", cam_cc);
+
+            // Clone the connected components image to draw features on.
+            cv::Mat cam_features = cam_cc.clone();
+            // Draw features (oriented bounding boxes, axes, centroids) for all regions.
+            drawAllFeatures(cam_labels, cam_features, 1000, 10);
+
+            // Blend the overlay with the original frame for a nicer effect.
+            cv::Mat overlay;
+            cv::addWeighted(src, 0.7, cam_features, 0.3, 0, overlay);
+            cv::imshow("Live Region Overlay", overlay);
+        }
     }
-    // for speed purposes, reduce the size of the input frame by half
-    cv::resize( src, src, cv::Size(), reduction, reduction );
 
-    // set the network input
-    da_net.set_input( src, scale_factor );
-
-    // run the network
-    da_net.run_network( dst, src.size() );
-
-    // apply a color map to the depth output to get a good visualization
-    cv::applyColorMap(dst, dst_vis, cv::COLORMAP_INFERNO );
-
-
-
-    // da input for static image
-    da_net.set_input( image, scale_factor );
-
-    // run the network
-    da_net.run_network( image_dst, src.size() );
-
-    // apply a color map to the depth output to get a good visualization
-    cv::applyColorMap(image_dst, image_dst_vis, cv::COLORMAP_INFERNO );
-
-
-
-    // display the images
-    cv::imshow("video", src);
-    cv::imshow("depth", dst_vis);
-
-    // terminate if the user types 'q'
-    char key = cv::waitKey(10);
-    if( key == 'q' ) {
-      break;
-    } else if (key == 's') {
-      cv::imwrite("video_image.png", src);
-      cv::imwrite("depth_image.png", dst_vis);
-      printf("Images saved\n");
-    } else if (key == 't') {
-      applyThresholding(image, image_dst);
-      cv::imshow("Thresholded", image);
-    } else if (key == 'm') {
-      applyThresholding(image, image_dst);
-      applyDilation(image_dst, image_dilated);
-      cv::imshow("Dilated", image_dilated);
-    }
-  }
-
-  printf("Terminating\n");
-
-  return(0);
+    printf("Terminating\n");
+    return 0;
 }
