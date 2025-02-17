@@ -56,7 +56,6 @@ void applyMorphologicalFiltering(const cv::Mat &src, cv::Mat &dst) {
 void applyConnectedComponents(const cv::Mat &binary_image, cv::Mat &dst, cv::Mat &labels) {
     cv::Mat stats, centroids;
     int num_labels = cv::connectedComponentsWithStats(binary_image, labels, stats, centroids);
-    std::cout << "Total regions found (including background): " << num_labels << std::endl;
 
     // Identify regions that touch the image boundaries.
     std::unordered_set<int> edge_regions;
@@ -84,7 +83,7 @@ void applyConnectedComponents(const cv::Mat &binary_image, cv::Mat &dst, cv::Mat
             region_sizes.push_back({area, i});
         }
     }
-    std::cout << "Remaining valid regions after filtering: " << region_sizes.size() << std::endl;
+
     // Sort regions by size (largest first).
     std::sort(region_sizes.rbegin(), region_sizes.rend());
 
@@ -137,7 +136,7 @@ std::pair<std::vector<double>, cv::Mat> compute_features(const cv::Mat &labels, 
     double mu20 = m.mu20 / area;
     double mu02 = m.mu02 / area;
     double mu11 = m.mu11 / area;
-    double theta = 0.5 * atan2(2 * mu11, mu20 - mu02);  // in radians
+    double theta = 0.5 * atan2(2 * mu11, mu20 - mu02);  // least central moment orientation
 
     // Gather all points for the region.
     std::vector<cv::Point> points;
@@ -190,6 +189,12 @@ std::pair<std::vector<double>, cv::Mat> compute_features(const cv::Mat &labels, 
     cv::circle(feature_display, centroid, 4, cv::Scalar(255, 0, 0), -1);
     cv::putText(feature_display, "Centroid", centroid + cv::Point(10, 10),
                 cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0), 2);
+
+    // Draw region id number at the top-left corner of the object region box.
+    char region_text[50];
+    sprintf(region_text, "Region %d", region_id);
+    cv::putText(feature_display, region_text, cv::Point(rRect.boundingRect().x, rRect.boundingRect().y - 10),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
 
     std::vector<double> features = { percent_filled, aspect_ratio, theta };
     return { features, feature_display };
@@ -260,6 +265,11 @@ void drawAllFeatures(const cv::Mat &labels, cv::Mat &display, double minAreaThre
         cv::Point axis_end(static_cast<int>(cx + line_length * cos(theta)),
                            static_cast<int>(cy + line_length * sin(theta)));
         cv::line(display, axis_start, axis_end, cv::Scalar(0, 0, 255), 2);
+
+        // Draw region id number at the top-left corner of the object region box.
+        char region_text[50];
+        sprintf(region_text, "Region %d", region_id);
+        cv::putText(display, region_text, cv::Point(rRect.boundingRect().x, rRect.boundingRect().y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
 
         // Draw the centroid (blue).
         cv::circle(display, cv::Point(static_cast<int>(cx), static_cast<int>(cy)), 4, cv::Scalar(255, 0, 0), -1);
