@@ -19,7 +19,7 @@ LDLIBS = -ltiff -lpng -ljpeg -llapack -lblas -lz -ljasper -lwebp -framework AVFo
 BINDIR = ../bin
 
 # Source Files
-PROGRAMS = displayVid
+PROGRAMS = displayVid confusionMatrix
 SOURCES = displayVid.cpp objectRecPreprocessing.cpp
 
 # Default Target: Build all programs
@@ -27,6 +27,10 @@ all: $(PROGRAMS)
 
 # Individual Targets
 displayVid: displayVid.o objectRecPreprocessing.o
+	$(CC) $^ -o $(BINDIR)/$@ $(LDFLAGS) $(LDLIBS)
+	install_name_tool -add_rpath /opt/homebrew/lib $(BINDIR)/$@
+
+confusionMatrix: confusionMatrix.o
 	$(CC) $^ -o $(BINDIR)/$@ $(LDFLAGS) $(LDLIBS)
 	install_name_tool -add_rpath /opt/homebrew/lib $(BINDIR)/$@
 

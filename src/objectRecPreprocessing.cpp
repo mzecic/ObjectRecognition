@@ -19,12 +19,24 @@
 // 1. Thresholding: Separate the object (assumed darker) from the white background.
 void applyThresholding(const cv::Mat &src, cv::Mat &dst) {
     dst = cv::Mat::zeros(src.size(), CV_8UC1);
-    for (int i = 0; i < src.rows; i++) {
+    int threshold_value = 140;
+
+     // Process each pixel
+     for (int i = 0; i < src.rows; i++) {
+        const cv::Vec3b* src_row = src.ptr<cv::Vec3b>(i);
+        uchar* dst_row = dst.ptr<uchar>(i);
+
         for (int j = 0; j < src.cols; j++) {
-            cv::Vec3b pixel = src.at<cv::Vec3b>(i, j);
-            int brightness = (pixel[0] + pixel[1] + pixel[2]) / 3;
-            // Invert threshold: if brightness > 100, it's background (0), else object (255).
-            dst.at<uchar>(i, j) = (brightness > 100) ? 0 : 255;
+            // Get BGR values
+            int blue = src_row[j][0];
+            int green = src_row[j][1];
+            int red = src_row[j][2];
+
+            // Simple average for brightness
+            int brightness = (red + green + blue) / 3;
+
+            // Apply threshold - if brightness is greater than threshold, it's background
+            dst_row[j] = (brightness > threshold_value) ? 0 : 255;
         }
     }
 }
@@ -57,147 +69,135 @@ void applyConnectedComponents(const cv::Mat &binary_image, cv::Mat &dst, cv::Mat
     cv::Mat stats, centroids;
     int num_labels = cv::connectedComponentsWithStats(binary_image, labels, stats, centroids);
 
-    // Identify regions that touch the image boundaries.
-    std::unordered_set<int> edge_regions;
-    int rows = binary_image.rows, cols = binary_image.cols;
-    // Define a margin (in pixels)
-    int edgeMargin = 50;
+    // Minimum region size (adjust this value based on your needs)
+    int min_size = 500;  // Increased from previous value
 
-    for (int i = 1; i < num_labels; i++) { // Skip background (label 0)
-        int x = stats.at<int>(i, cv::CC_STAT_LEFT);
-        int y = stats.at<int>(i, cv::CC_STAT_TOP);
-        int w = stats.at<int>(i, cv::CC_STAT_WIDTH);
-        int h = stats.at<int>(i, cv::CC_STAT_HEIGHT);
-        // If the bounding box comes within edgeMargin of any border, mark it.
-        if (x <= edgeMargin || y <= edgeMargin || (x + w) >= (cols - edgeMargin) || (y + h) >= (rows - edgeMargin)) {
-            edge_regions.insert(i);
-        }
-    }
-
-    // Filter out small regions. (Adjust min_size as needed.)
-    int min_size = 1000;
-    std::vector<std::pair<int, int>> region_sizes;
-    for (int i = 1; i < num_labels; i++) {
-        int area = stats.at<int>(i, cv::CC_STAT_AREA);
-        if (area >= min_size && edge_regions.find(i) == edge_regions.end()) {
-            region_sizes.push_back({area, i});
-        }
-    }
-
-    // Sort regions by size (largest first).
-    std::sort(region_sizes.rbegin(), region_sizes.rend());
-
-    // Create a color image for visualization.
-    cv::Mat output(binary_image.size(), CV_8UC3, cv::Scalar(50, 50, 50)); // Start with a gray background.
+    // Create color output
+    dst = cv::Mat::zeros(binary_image.size(), CV_8UC3);
     std::vector<cv::Vec3b> colors(num_labels);
-    colors[0] = cv::Vec3b(0, 0, 0); // Background: black.
+    colors[0] = cv::Vec3b(0, 0, 0); // Background
+
+    // Keep track of valid regions and their mapping
+    std::vector<int> valid_regions;
+
     for (int i = 1; i < num_labels; i++) {
-        colors[i] = cv::Vec3b(rand() % 256, rand() % 256, rand() % 256);
-    }
-    // Color the regions (skip those touching edges).
-    for (int y = 0; y < binary_image.rows; y++) {
-        for (int x = 0; x < binary_image.cols; x++) {
-            int label = labels.at<int>(y, x);
-            if (label > 0 && edge_regions.find(label) == edge_regions.end()) {
-                output.at<cv::Vec3b>(y, x) = colors[label];
+        colors[i] = cv::Vec3b(rand()%256, rand()%256, rand()%256);
+
+        // Get region size
+        int area = stats.at<int>(i, cv::CC_STAT_AREA);
+
+        // Skip small regions
+        if (area < min_size) {
+            colors[i] = cv::Vec3b(0, 0, 0);  // Make small regions black
+            // Also remove them from labels
+            for(int y = 0; y < labels.rows; y++) {
+                for(int x = 0; x < labels.cols; x++) {
+                    if(labels.at<int>(y,x) == i) {
+                        labels.at<int>(y,x) = 0;
+                    }
+                }
             }
+        } else {
+            valid_regions.push_back(i);
         }
     }
-    dst = output;
+
+    // Color the regions and draw labels
+    for(int y = 0; y < dst.rows; y++) {
+        for(int x = 0; x < dst.cols; x++) {
+            int label = labels.at<int>(y, x);
+            dst.at<cv::Vec3b>(y, x) = colors[label];
+        }
+    }
+
+    // Draw region numbers at centroids
+    for(size_t i = 0; i < valid_regions.size(); i++) {
+        int region_id = valid_regions[i];
+        cv::Point center(centroids.at<double>(region_id, 0), centroids.at<double>(region_id, 1));
+
+        // Get bounding box for this region
+        int x = stats.at<int>(region_id, cv::CC_STAT_LEFT);
+        int y = stats.at<int>(region_id, cv::CC_STAT_TOP);
+        int area = stats.at<int>(region_id, cv::CC_STAT_AREA);
+
+        // Draw the region ID
+        std::string label = std::to_string(region_id);
+        cv::putText(dst, label, center, cv::FONT_HERSHEY_SIMPLEX, 0.8,
+                    cv::Scalar(255, 255, 255), 2);
+
+        std::cout << "Region " << region_id << " at position ("
+                  << center.x << "," << center.y << ") with area "
+                  << area << " pixels" << std::endl;
+    }
+
+    // Print number of regions above minimum size
+    std::cout << "Found " << valid_regions.size() << " valid regions" << std::endl;
 }
 
 // 4. Compute Features for a Region:
 //    Given a label map and a region ID, compute region-based features and overlay them.
 std::pair<std::vector<double>, cv::Mat> compute_features(const cv::Mat &labels, int region_id) {
-    // Validate region_id (skip background, which is label 0)
-    double minVal, maxVal;
-    cv::minMaxLoc(labels, &minVal, &maxVal);
-    if (region_id <= 0 || region_id > maxVal) {
-        std::cerr << "Warning: Region ID " << region_id << " is not valid." << std::endl;
-        return { {0, 0, 0}, cv::Mat::zeros(labels.size(), CV_8UC3) };
-    }
-
-    // Create a binary mask for the region.
+    // Create a binary mask for the region
     cv::Mat region_mask = (labels == region_id);
 
-    // Compute moments.
-    cv::Moments m = cv::moments(region_mask, true);
-    double area = m.m00;
-    if (area < 1e-6) {
-        std::cerr << "Warning: Region " << region_id << " has zero area." << std::endl;
-        return { {0, 0, 0}, cv::Mat::zeros(labels.size(), CV_8UC3) };
+    // Get contours
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(region_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    if (contours.empty()) {
+        return {{0, 0, 0}, cv::Mat()};
     }
 
-    // Compute centroid.
-    double cx = m.m10 / m.m00;
-    double cy = m.m01 / m.m00;
+    // Get the largest contour
+    auto largest_contour = std::max_element(contours.begin(), contours.end(),
+        [](const std::vector<cv::Point>& c1, const std::vector<cv::Point>& c2) {
+            return cv::contourArea(c1) < cv::contourArea(c2);
+        });
 
-    // Compute normalized central moments and orientation.
-    double mu20 = m.mu20 / area;
-    double mu02 = m.mu02 / area;
-    double mu11 = m.mu11 / area;
-    double theta = 0.5 * atan2(2 * mu11, mu20 - mu02);  // least central moment orientation
+    // Get contour area
+    double contour_area = cv::contourArea(*largest_contour);
 
-    // Gather all points for the region.
-    std::vector<cv::Point> points;
-    for (int y = 0; y < labels.rows; y++) {
-        for (int x = 0; x < labels.cols; x++) {
-            if (labels.at<int>(y, x) == region_id)
-                points.push_back(cv::Point(x, y));
-        }
-    }
-    if (points.empty()) {
-        std::cerr << "Warning: No points found for region " << region_id << std::endl;
-        return { {0, 0, 0}, cv::Mat::zeros(labels.size(), CV_8UC3) };
-    }
+    // Get rotated rectangle and its properties
+    cv::RotatedRect rRect = cv::minAreaRect(*largest_contour);
+    double width = rRect.size.width;
+    double height = rRect.size.height;
+    double bbox_area = width * height;
 
-    // Compute the oriented bounding box.
-    cv::RotatedRect rRect = cv::minAreaRect(points);
-    double bbox_area = rRect.size.width * rRect.size.height;
-    double percent_filled = area / bbox_area;
-    double aspect_ratio = rRect.size.height / rRect.size.width;
+    // Calculate percent filled using contour area
+    double percent_filled = contour_area / bbox_area;
 
-    // Prepare an overlay image.
-    cv::Mat mask_8u;
-    region_mask.convertTo(mask_8u, CV_8UC1, 255);
-    cv::Mat feature_display;
-    cv::cvtColor(mask_8u, feature_display, cv::COLOR_GRAY2BGR);
-    feature_display += cv::Scalar(50, 50, 50); // Brighten for visibility.
+    // Ensure percent_filled doesn't exceed 1.0
+    percent_filled = std::min(1.0, percent_filled);
 
-    // Draw the oriented (rotated) bounding box in green with thicker lines.
-    cv::Point2f boxPoints[4];
-    rRect.points(boxPoints);
+    // Calculate aspect ratio (always between 0 and 1)
+    double aspect_ratio = std::min(width, height) / std::max(width, height);
+
+    // Calculate perimeter and circularity (new shape feature)
+    double perimeter = cv::arcLength(*largest_contour, true);
+    double circularity = 4 * CV_PI * contour_area / (perimeter * perimeter);
+
+    std::cout << "\nFeature Calculations:" << std::endl;
+    std::cout << "Area: " << contour_area << " pixels" << std::endl;
+    std::cout << "Perimeter: " << perimeter << " pixels" << std::endl;
+    std::cout << "Bounding Box: " << width << " x " << height << " pixels" << std::endl;
+    std::cout << "Percent Filled: " << percent_filled << std::endl;
+    std::cout << "Aspect Ratio: " << aspect_ratio << std::endl;
+    std::cout << "Circularity: " << circularity << std::endl;
+
+    // Create visualization
+    cv::Mat visualization;
+    cv::cvtColor(region_mask, visualization, cv::COLOR_GRAY2BGR);
+
+    // Draw rotated rectangle
+    cv::Point2f vertices[4];
+    rRect.points(vertices);
     for (int i = 0; i < 4; i++) {
-        cv::line(feature_display, boxPoints[i], boxPoints[(i + 1) % 4], cv::Scalar(0, 255, 0), 3);
+        cv::line(visualization, vertices[i], vertices[(i+1)%4], cv::Scalar(0, 255, 0), 2);
     }
 
-    // Draw the axis of least central moment as a red line.
-    int line_length = 50;  // Adjust as needed.
-    cv::Point axis_start(static_cast<int>(cx), static_cast<int>(cy));
-    cv::Point axis_end(static_cast<int>(cx + line_length * cos(theta)),
-                       static_cast<int>(cy + line_length * sin(theta)));
-    cv::line(feature_display, axis_start, axis_end, cv::Scalar(0, 0, 255), 3);
-
-    // Overlay the computed angle (in degrees) for reference.
-    char angle_text[50];
-    sprintf(angle_text, "Theta: %.2f deg", theta * 180.0 / CV_PI);
-    cv::putText(feature_display, angle_text, cv::Point(static_cast<int>(cx) + 15, static_cast<int>(cy) + 15),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2);
-
-    // Draw the centroid as a blue circle and label it.
-    cv::Point centroid(static_cast<int>(cx), static_cast<int>(cy));
-    cv::circle(feature_display, centroid, 4, cv::Scalar(255, 0, 0), -1);
-    cv::putText(feature_display, "Centroid", centroid + cv::Point(10, 10),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0), 2);
-
-    // Draw region id number at the top-left corner of the object region box.
-    char region_text[50];
-    sprintf(region_text, "Region %d", region_id);
-    cv::putText(feature_display, region_text, cv::Point(rRect.boundingRect().x, rRect.boundingRect().y - 10),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2);
-
-    std::vector<double> features = { percent_filled, aspect_ratio, theta };
-    return { features, feature_display };
+    // Return percent_filled, aspect_ratio, and circularity instead of angle
+    std::vector<double> features = {percent_filled, aspect_ratio, circularity};
+    return {features, visualization};
 }
 
 // Draw features for all valid regions on the given display image.
